@@ -2,5 +2,5 @@ venv311/
 __pycache__/
 *.pyc
 .env
-.idea/
 .vscode/
+.idea/
