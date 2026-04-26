@@ -399,6 +399,152 @@ def chatbot_query(
     db: Session = Depends(get_db),
     user=Depends(verify_token)
 ):
+    message = query.message.lower().strip()
+        # ==========================
+    # HOD CHATBOT LOGIC
+    # ==========================
+    if user["role"].lower().strip() == "hod":
+
+        # 1. Fee defaulters
+        if "pending fee" in message or "fee defaulter" in message or "fees pending" in message:
+            students_query = db.query(models.Student).filter(models.Student.pending_fee > 0)
+
+            # Optional amount filter: pending fee less than 5000
+            if "less than" in message or "<" in message:
+                import re
+                numbers = re.findall(r"\d+", message)
+
+                if numbers:
+                    amount = float(numbers[0])
+                    students_query = students_query.filter(models.Student.pending_fee < amount)
+
+            students = students_query.all()
+
+            if not students:
+                return {
+                    "reply": "No students found with matching pending fee condition."
+                }
+
+            return {
+                "reply": "Students with pending fee:",
+                "students": [
+                    {
+                        "student_id": s.id,
+                        "name": s.name,
+                        "roll_number": s.roll_number,
+                        "branch": s.branch,
+                        "pending_fee": s.pending_fee
+                    }
+                    for s in students
+                ]
+            }
+
+        # 2. Low attendance students
+        elif "attendance" in message and ("less than" in message or "<" in message or "low" in message):
+            import re
+            numbers = re.findall(r"\d+", message)
+
+            threshold = 75
+            if numbers:
+                threshold = float(numbers[0])
+
+            students = (
+                db.query(models.Student)
+                .filter(models.Student.attendance_percentage < threshold)
+                .all()
+            )
+
+            if not students:
+                return {
+                    "reply": f"No students found with attendance less than {threshold}%."
+                }
+
+            return {
+                "reply": f"Students with attendance less than {threshold}%:",
+                "students": [
+                    {
+                        "student_id": s.id,
+                        "name": s.name,
+                        "roll_number": s.roll_number,
+                        "branch": s.branch,
+                        "attendance_percentage": s.attendance_percentage
+                    }
+                    for s in students
+                ]
+            }
+
+        # 3. Highest marks / subject topper
+        elif "highest marks" in message or "topper" in message or "highest mark" in message:
+            subject_keywords = {
+                "mmd": "Mining Massive Datasets",
+                "mining massive datasets": "Mining Massive Datasets",
+                "dvt": "Data Visualization Techniques",
+                "data visualization": "Data Visualization Techniques",
+                "data visualization techniques": "Data Visualization Techniques",
+                "sma": "Social Media Analytics",
+                "social media analytics": "Social Media Analytics",
+                "mean stack": "MEAN Stack Technologies",
+                "marketing management": "Marketing Management",
+                "organizational behavior": "Organizational Behavior",
+            }
+
+            matched_subject = None
+
+            for key, value in subject_keywords.items():
+                if key in message:
+                    matched_subject = value
+                    break
+
+            if not matched_subject:
+                return {
+                    "reply": "Please mention the subject clearly. Example: 'Who got highest marks in DVT?'"
+                }
+
+            subject_results = (
+                db.query(models.SubjectResult)
+                .filter(models.SubjectResult.subject_name.ilike(f"%{matched_subject}%"))
+                .all()
+            )
+
+            if not subject_results:
+                return {
+                    "reply": f"No marks found for {matched_subject}."
+                }
+
+            topper = max(subject_results, key=lambda x: x.external_marks)
+
+            result = db.query(models.Result).filter(models.Result.id == topper.result_id).first()
+
+            if not result:
+                return {
+                    "reply": "Result record not found."
+                }
+
+            student = db.query(models.Student).filter(models.Student.id == result.student_id).first()
+
+            if not student:
+                return {
+                    "reply": "Student record not found."
+                }
+
+            return {
+                "reply": f"Highest marks in {matched_subject}:",
+                "topper": {
+                    "student_name": student.name,
+                    "roll_number": student.roll_number,
+                    "branch": student.branch,
+                    "subject_name": topper.subject_name,
+                    "external_marks": topper.external_marks,
+                    "grade": topper.grade,
+                    "grade_points": topper.grade_points
+                }
+            }
+
+        # 4. General HOD fallback
+        else:
+            return {
+                "reply": "HOD chatbot can answer questions like: 'list students with pending fee', 'attendance less than 75', or 'who got highest marks in DVT?'"
+            }
     user_email = user["email"]
 
     student = db.query(models.Student).filter(models.Student.email == user_email).first()
@@ -406,7 +552,8 @@ def chatbot_query(
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
 
-    message = query.message.lower().strip()
+    
+    
     # 1. CGPA / SGPA
     if "cgpa" in message or "sgpa" in message:
         latest_result = (
